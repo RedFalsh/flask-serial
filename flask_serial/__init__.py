@@ -1,0 +1,198 @@
+"""flask-serial Package.
+:author: Redfalsh <13693421942@163.com>
+:license: MIT, see license file or https://opensource.org/licenses/MIT
+:created on 2019-01-10 10:59:22
+:last modified by:   Redfalsh
+:last modified time: 2019-01-10 11:00:00
+"""
+__version__ = "1.0.1"
+
+import serial
+
+import threading
+import collections
+
+SERIAL_LOG_INFO = 0x01
+SERIAL_LOG_NOTICE = 0x02
+SERIAL_LOG_WARNING = 0x04
+SERIAL_LOG_ERR = 0x05
+SERIAL_LOG_DEBUG = 0x6
+
+class Ser:
+    """serial class,use thire library: pyserial"""
+    def __init__(self):
+        # default serial args
+        self.serial = serial.Serial()
+        self.serial.timeout  = 0.1
+        self.serial.port     = "COM1"
+        self.serial.baudrate = 9600
+        self.serial.bytesize = 8
+        self.serial.parity   = "N"
+        self.serial.stopbits = 1
+        self.max_recv_buf_len = 255
+
+        self._out_packet = collections.deque()
+        # serial receive threading
+        self._thread = None
+        self.serial_alive = False
+
+        self._on_message = None
+        self._on_send = None
+        self._on_log = None
+        self._logger = None
+        # 消息接收线程锁
+        self._callback_mutex = threading.RLock()
+
+    def open_serial(self):
+        """try to open the serial"""
+        if self.serial.port and self.serial.baudrate:
+            try:
+                self.serial.open()
+            except serial.SerialException as e:
+                print("[ERR] open serial error!!! %s" % e)
+                self._easy_log(SERIAL_LOG_ERR, "open serial error!!! %s", e)
+            else:
+                self.serial_alive = True
+                self._thread = threading.Thread(target=self._recv)
+                self._thread.setDaemon(True)
+                self._thread.start()
+                print("[INFO] open serial success: %s / %s"%(self.serial.port, self.serial.baudrate))
+                self._easy_log(SERIAL_LOG_INFO, "open serial success: %s / %s",self.serial.port, self.serial.baudrate)
+        else:
+            print("[ERR] port is not setting!!!")
+            self._easy_log(SERIAL_LOG_ERR, "port is not setting!!!")
+
+    def _recv(self):
+        """serial recv thread"""
+        while self.serial_alive:
+            while self.serial_alive:
+                try:
+                    b = self.serial.read(self.max_recv_buf_len)
+                    if not b:
+                        break
+                    # s = str(binascii.b2a_hex(b).decode('utf-8')).upper()
+                    self._handle_on_message(b)
+                    self._easy_log(SERIAL_LOG_INFO, "serial receive message:%s", b)
+                except Exception as e:
+                    self.serial_alive = False
+                    self._easy_log(SERIAL_LOG_ERR, "serial err:%s", e)
+
+    @property
+    def on_message(self):
+        """ If implemented, called when the serial has receive message.
+        Defined to allow receive.
+
+        """
+        return self._on_message
+
+    @on_message.setter
+    def on_message(self, func):
+        with self._callback_mutex:
+            self._on_message = func
+
+    def _handle_on_message(self, message):
+        """serial receive message handle"""
+        self.on_message(message)
+
+    def on_send(self, msg):
+        """send msg,
+        msg: type of bytes or str"""
+        with self._callback_mutex:
+            if msg:
+                if isinstance(msg, bytes):
+                    self.serial.write(msg)
+                if isinstance(msg, str):
+                    self.serial.write(msg.encode('utf-8'))
+            self._easy_log(SERIAL_LOG_INFO, "serial send message: %s", msg)
+
+    @property
+    def on_log(self):
+        """If implemented, called when the serial has log information.
+        Defined to allow debugging."""
+        return self._on_log
+
+    @on_log.setter
+    def on_log(self, func):
+        """ Define the logging callback implementation.
+
+        Expected signature is:
+            log_callback(level, buf)
+
+        level:      gives the severity of the message and will be one of
+                    SERIAL_LOG_INFO, SERIAL_LOG_NOTICE, SERIAL_LOG_WARNING,
+                    SERIAL_LOG_ERR, and SERIAL_LOG_DEBUG.
+        buf:        the message itself
+        """
+        self._on_log = func
+
+    def _easy_log(self, level, fmt, *args):
+        if self.on_log is not None:
+            buf = fmt % args
+            try:
+                if level == SERIAL_LOG_DEBUG:
+                    level = "[DEBUG]"
+                if level == SERIAL_LOG_ERR:
+                    level = "[ERR]"
+                if level == SERIAL_LOG_INFO:
+                    level = "[INFO]"
+                if level == SERIAL_LOG_NOTICE:
+                    level = "[NOTICE]"
+                if level == SERIAL_LOG_WARNING:
+                    level = "[WARNING]"
+                self.on_log(level, buf)
+            except Exception:
+                # Can't _easy_log this, as we'll recurse until we break
+                pass # self._logger will pick this up, so we're fine
+
+class Serial:
+    def __init__(self, app):
+        self.ser = Ser()
+        if app is not None:
+            self.init_app(app)
+        else:
+            self.ser.open_serial()
+
+    def init_app(self, app):
+        self.ser.serial.timeout  = app.config.get("SERIAL_TIMEOUT")
+        self.ser.serial.port     = app.config.get("SERIAL_PORT")
+        self.ser.serial.baudrate = app.config.get("SERIAL_BAUDRATE")
+        self.ser.serial.bytesize = app.config.get("SERIAL_BYTESIZE")
+        self.ser.serial.parity   = app.config.get("SERIAL_PARITY")
+        self.ser.serial.stopbits = app.config.get("SERIAL_STOPBITS")
+
+        # try open serial
+        self.ser.open_serial()
+
+    def on_message(self):
+        """绑定串口接收消息到此装饰器中
+        用法：
+            @serial.on_message()
+            def handle_message(msg):
+                print("接收到串口消息：", msg)
+        """
+        def decorator(handler):
+            # type: (Callable) -> Callable
+            self.ser.on_message = handler
+            return handler
+        return decorator
+
+    def on_send(self, msg):
+        """绑定串口发送消息
+        用法：
+            serial.on_send("发送一条串口消息")
+        """
+        self.ser.on_send(msg)
+
+    def on_log(self):
+        """打印功能
+        用法：
+            serial.on_log()
+            def handle_logging(level, info)
+                print(info)
+        """
+        def decorator(handler):
+            # type: (Callable) -> Callable
+            self.ser.on_log = handler
+            return handler
+        return decorator
+
