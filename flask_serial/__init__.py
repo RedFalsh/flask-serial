@@ -5,7 +5,7 @@
 :last modified by:   Redfalsh
 :last modified time: 2019-01-10 11:00:00
 """
-__version__ = "1.0.1"
+__version__ = "1.0.3"
 
 import serial
 
