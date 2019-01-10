@@ -4,6 +4,9 @@
 :created on 2019-01-10 10:59:22
 :last modified by:   Redfalsh
 :last modified time: 2019-01-10 11:00:00
+:describe:
+        flask-serial package is used in flask website, it can receive or send serial's data,
+        you can use it to send or receive some serial's data to show website with flask-socketio
 """
 __version__ = "1.0.3"
 
@@ -40,7 +43,7 @@ class Ser:
         self._on_send = None
         self._on_log = None
         self._logger = None
-        # 消息接收线程锁
+        # callback mutex RLock
         self._callback_mutex = threading.RLock()
 
     def open_serial(self):
@@ -141,8 +144,7 @@ class Ser:
                     level = "[WARNING]"
                 self.on_log(level, buf)
             except Exception:
-                # Can't _easy_log this, as we'll recurse until we break
-                pass # self._logger will pick this up, so we're fine
+                pass
 
 class Serial:
     def __init__(self, app):
@@ -164,11 +166,11 @@ class Serial:
         self.ser.open_serial()
 
     def on_message(self):
-        """绑定串口接收消息到此装饰器中
-        用法：
+        """serial receive message use decorator
+        use：
             @serial.on_message()
             def handle_message(msg):
-                print("接收到串口消息：", msg)
+                print("serial receive message：", msg)
         """
         def decorator(handler):
             # type: (Callable) -> Callable
@@ -177,15 +179,15 @@ class Serial:
         return decorator
 
     def on_send(self, msg):
-        """绑定串口发送消息
-        用法：
-            serial.on_send("发送一条串口消息")
+        """serial send message
+        use：
+            serial.on_send("send a message to serial")
         """
         self.ser.on_send(msg)
 
     def on_log(self):
-        """打印功能
-        用法：
+        """logging
+        use：
             serial.on_log()
             def handle_logging(level, info)
                 print(info)
