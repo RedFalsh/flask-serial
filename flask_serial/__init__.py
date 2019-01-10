@@ -8,7 +8,7 @@
         flask-serial package is used in flask website, it can receive or send serial's data,
         you can use it to send or receive some serial's data to show website with flask-socketio
 """
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 import serial
 
