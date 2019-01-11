@@ -8,10 +8,10 @@
         flask-serial package is used in flask website, it can receive or send serial's data,
         you can use it to send or receive some serial's data to show website with flask-socketio
 """
-__version__ = "1.0.4"
+__version__ = "1.1.0"
 
 import serial
-
+import time
 import threading
 import collections
 
@@ -37,6 +37,7 @@ class Ser:
         self._out_packet = collections.deque()
         # serial receive threading
         self._thread = None
+        self._thread_terminate = False
         self.serial_alive = False
 
         self._on_message = None
@@ -45,29 +46,68 @@ class Ser:
         self._logger = None
         # callback mutex RLock
         self._callback_mutex = threading.RLock()
+        self._open_mutex = threading.Lock()
 
-    def open_serial(self):
+    def loop_start(self):
+        self._thread = threading.Thread(target=self.loop_forever)
+        self._thread.setDaemon(True)
+        self._thread.start()
+
+    def loop_forever(self):
+        run = True
+        while run:
+            if self.serial_alive:
+                break
+            else:
+                with self._open_mutex:
+                    self._open_serial()
+            time.sleep(1)
+        while self.serial_alive:
+            time.sleep(0.1)
+            while run:
+                try:
+                    b = self.serial.read(self.max_recv_buf_len)
+                    if not b:
+                        break
+                    self._handle_on_message(b)
+                    self._easy_log(SERIAL_LOG_INFO, "serial receive message:%s", b)
+                except Exception as e:
+                    pass
+
+    def _open_serial(self):
         """try to open the serial"""
         if self.serial.port and self.serial.baudrate:
             try:
+                if self.serial.isOpen():
+                    self._close_serial()
                 self.serial.open()
             except serial.SerialException as e:
-                print("[ERR] open serial error!!! %s" % e)
-                self._easy_log(SERIAL_LOG_ERR, "open serial error!!! %s", e)
+                # print("[ERR] open serial error!!! %s" % e)
+                # self._easy_log(SERIAL_LOG_ERR, "open serial error!!! %s", e)
+                raise
             else:
                 self.serial_alive = True
                 self._thread = threading.Thread(target=self._recv)
                 self._thread.setDaemon(True)
                 self._thread.start()
-                print("[INFO] open serial success: %s / %s"%(self.serial.port, self.serial.baudrate))
+                # print("[INFO] open serial success: %s / %s"%(self.serial.port, self.serial.baudrate))
                 self._easy_log(SERIAL_LOG_INFO, "open serial success: %s / %s",self.serial.port, self.serial.baudrate)
         else:
             print("[ERR] port is not setting!!!")
             self._easy_log(SERIAL_LOG_ERR, "port is not setting!!!")
 
+    def _close_serial(self):
+        try:
+            self.serial.close()
+            self.serial_alive = False
+            self._thread_terminate = False
+        except:
+            pass
+
     def _recv(self):
         """serial recv thread"""
         while self.serial_alive:
+            time.sleep(0.1)
             while self.serial_alive:
                 try:
                     b = self.serial.read(self.max_recv_buf_len)
@@ -77,8 +117,9 @@ class Ser:
                     self._handle_on_message(b)
                     self._easy_log(SERIAL_LOG_INFO, "serial receive message:%s", b)
                 except Exception as e:
-                    self.serial_alive = False
-                    self._easy_log(SERIAL_LOG_ERR, "serial err:%s", e)
+                    pass
+                    # self.serial_alive = False
+                    # self._easy_log(SERIAL_LOG_ERR, "serial err:%s", e)
 
     @property
     def on_message(self):
@@ -151,8 +192,6 @@ class Serial:
         self.ser = Ser()
         if app is not None:
             self.init_app(app)
-        else:
-            self.ser.open_serial()
 
     def init_app(self, app):
         self.ser.serial.timeout  = app.config.get("SERIAL_TIMEOUT")
@@ -163,7 +202,7 @@ class Serial:
         self.ser.serial.stopbits = app.config.get("SERIAL_STOPBITS")
 
         # try open serial
-        self.ser.open_serial()
+        self.ser.loop_start()
 
     def on_message(self):
         """serial receive message use decorator
