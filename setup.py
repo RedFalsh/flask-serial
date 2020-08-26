@@ -1,4 +1,6 @@
-"""flask-serial Setup."""
+#!usr/bin/python
+#-*- coding: utf-8 -*-
+# """flask-serial Setup."""
 from setuptools import setup
 from flask_serial import __version__
 
